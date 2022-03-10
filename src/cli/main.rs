@@ -1,3 +1,4 @@
+use bytes::{BufMut, BytesMut};
 use tcp_accul::*;
 
 use log::*;
@@ -42,36 +43,56 @@ fn main() {
 
     println!(">> Type a integer number to send to the server");
     while let Some(line) = lines.next() {
-        // parse number
-        let raw_number = line.unwrap();
-        let number: i32 = match raw_number.trim().parse() {
-            Ok(num) => {
-                // stop condition;
-                if num == 0 {
-                    println!(">> Received number 0, which is the stop condition. Exiting...");
-                    stream.shutdown(Shutdown::Both).unwrap();
-                    break;
+        // parse numbers
+        let numbers: Vec<i32> = line
+            .unwrap()
+            .trim()
+            .split(' ')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| match s.parse::<i32>() {
+                Ok(num) => Some(num),
+                Err(_) => {
+                    warn!("{} is not a valid number, will be ignored", s);
+                    None
                 }
-                num
-            }
-            Err(_) => {
-                println!(
-                    ">> {} is not a valid integer, please try again with a new number",
-                    raw_number.trim(),
-                );
-                continue;
-            }
-        };
+            }) // filter and ignore invalid numbers
+            .collect();
+        // check if valid numbers where received
+        if numbers.is_empty() {
+            println!(">> No valid numbers detected. Please, try again");
+            continue;
+        }
+        // check stop condition
+        if numbers.first().unwrap().clone() == 0 {
+            println!("First number typed is a 0. Exiting program...");
+            stream.shutdown(Shutdown::Both).unwrap();
+            break;
+        }
+        debug!("Sending numbers {:?} to server {}", numbers, address);
+        // encode numbers
+        let mut buffer = BytesMut::with_capacity(
+            numbers.len() * std::mem::size_of::<i32>() + std::mem::size_of::<u32>(),
+        );
+        // put header with quantity of numbers to send
+        buffer.put_slice(&(numbers.len() as u32).to_le_bytes());
+        // encode numbers
+        numbers
+            .iter()
+            .for_each(|num| buffer.put_slice(&num.to_le_bytes()));
         // send number
-        match stream.write_all(&number.to_le_bytes()) {
+
+        match stream.write_all(&buffer[..]) {
             Ok(_) => {
                 // flush stream
                 match stream.flush() {
                     Ok(_) => (),
                     Err(err) => {
                         error!(
-                            "Error sending number {} to server {}: {}",
-                            number, address, err
+                            "Error sending numbers {:?} to server {}: {}",
+                            &numbers[..],
+                            address,
+                            err
                         );
                         stream.shutdown(Shutdown::Both).unwrap();
                         break;
@@ -80,8 +101,10 @@ fn main() {
             }
             Err(err) => {
                 error!(
-                    "Error sending number {} to server {}: {}",
-                    number, address, err
+                    "Error sending number {:?} to server {}: {}",
+                    &numbers[..],
+                    address,
+                    err
                 );
                 stream.shutdown(Shutdown::Both).unwrap();
                 break;
