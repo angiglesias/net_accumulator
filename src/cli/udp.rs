@@ -1,11 +1,11 @@
 use bytes::{BufMut, BytesMut};
-use tcp_accul::*;
+use net_accul::*;
 
 use log::*;
 use simple_logger::SimpleLogger;
 use std::env;
-use std::io::{self, BufRead, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream};
+use std::io::{self, BufRead};
+use std::net::{SocketAddr, UdpSocket};
 use std::process::exit;
 use std::time::Duration;
 
@@ -14,7 +14,7 @@ fn main() {
     SimpleLogger::new().init().unwrap();
 
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 {
+    if args.len() < 3 {
         error!(
             "Invalid number of arguments. {} takes 2 args, received {}",
             get_program_name("tcp1cli"),
@@ -28,18 +28,38 @@ fn main() {
         .expect(format!("{}:{} is a invalid remote address", args[1], args[2]).as_str());
 
     // create socket connection
-    let mut stream = match TcpStream::connect_timeout(&address, Duration::from_secs(10)) {
-        Ok(stream) => stream,
+    let port: u16 = if args.len() > 3 {
+        args[3].parse().unwrap_or_default()
+    } else {
+        0
+    };
+    let socket = match UdpSocket::bind(format!("0.0.0.0:{}", port)) {
+        Ok(socket) => socket,
         Err(err) => {
-            error!("Error connecting to server {}: {}", address, err);
+            error!("Error creating udp socket: {}", err);
             exit(1);
         }
     };
+    // "connect" socket to remote server
+    match socket.connect(&address) {
+        Ok(res) => res,
+        Err(err) => {
+            error!(
+                "Error establishing communication with remote {}: {}",
+                address, err
+            );
+            exit(1);
+        }
+    }
+    // set non-block mode for response
+    socket
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
 
     // read numbers from stdin and send over tcp
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
-    let mut resp = [0 as u8; 4];
+    let mut resp = [0 as u8; std::mem::size_of::<i32>()];
 
     println!(">> Type a integer number to send to the server");
     while let Some(line) = lines.next() {
@@ -66,7 +86,6 @@ fn main() {
         // check stop condition
         if numbers.first().unwrap().clone() == 0 {
             println!("First number typed is a 0. Exiting program...");
-            stream.shutdown(Shutdown::Both).unwrap();
             break;
         }
         debug!("Sending numbers {:?} to server {}", numbers, address);
@@ -74,30 +93,24 @@ fn main() {
         let mut buffer = BytesMut::with_capacity(
             numbers.len() * std::mem::size_of::<i32>() + std::mem::size_of::<u32>(),
         );
-        // put header with quantity of numbers to send
-        buffer.put_slice(&(numbers.len() as u32).to_le_bytes());
-        // encode numbers
         numbers
             .iter()
             .for_each(|num| buffer.put_slice(&num.to_le_bytes()));
         // send number
-
-        match stream.write_all(&buffer[..]) {
-            Ok(_) => {
+        match socket.send(&buffer[..]) {
+            Ok(bytes_sent) => {
                 // flush stream
-                match stream.flush() {
-                    Ok(_) => (),
-                    Err(err) => {
-                        error!(
-                            "Error sending numbers {:?} to server {}: {}",
-                            &numbers[..],
-                            address,
-                            err
-                        );
-                        stream.shutdown(Shutdown::Both).unwrap();
-                        break;
-                    }
+                if bytes_sent != buffer.len() {
+                    error!(
+                        "Error sending numbers {:?} to server {}: Message was not sent completed (sent {}/{} bytes)",
+                        &numbers[..],
+                        address,
+                        bytes_sent,
+                        buffer.len()
+                    );
+                    break;
                 }
+                info!("Sent numbers successfully to server {}", address);
             }
             Err(err) => {
                 error!(
@@ -106,19 +119,25 @@ fn main() {
                     address,
                     err
                 );
-                stream.shutdown(Shutdown::Both).unwrap();
                 break;
             }
         }
         // parse response
-        match stream.read_exact(&mut resp) {
-            Ok(_) => {
+        match socket.recv(&mut resp) {
+            Ok(bytes_recv) => {
+                if bytes_recv != std::mem::size_of::<i32>() {
+                    error!(
+                        "Response from server is not full (received {}/{} bytes)",
+                        bytes_recv,
+                        std::mem::size_of::<i32>()
+                    );
+                    break;
+                }
                 let accul = i32::from_le_bytes(resp);
                 println!(">> Received {} from server", accul);
             }
             Err(err) => {
                 error!("Error receiving data from server: {}", err);
-                stream.shutdown(Shutdown::Both).unwrap();
                 break;
             }
         }

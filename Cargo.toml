@@ -1,5 +1,5 @@
 [package]
-name = "tcp_accul"
+name = "net_accul"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,11 +7,19 @@ edition = "2021"
 
 [[bin]]
 name = "tcp1cli"
-path = "src/cli/main.rs"
+path = "src/cli/tcp.rs"
 
 [[bin]]
 name = "tcp1ser"
-path = "src/server/main.rs"
+path = "src/server/tcp.rs"
+
+[[bin]]
+name = "udpcli"
+path = "src/cli/udp.rs"
+
+[[bin]]
+name = "udpser"
+path = "src/server/udp.rs"
 
 [dependencies]
 log = "0.4.14"
