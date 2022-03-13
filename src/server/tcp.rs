@@ -5,8 +5,10 @@ use std::net::TcpListener;
 use std::process::exit;
 use std::thread;
 
-use tcp_accul::accul::tcp::{Accumulator, TcpOps};
-use tcp_accul::get_program_name;
+use net_accul::{
+    accul::tcp::{Accumulator, TcpOps},
+    get_program_name,
+};
 
 fn main() {
     // setup logging

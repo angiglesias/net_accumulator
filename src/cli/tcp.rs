@@ -1,5 +1,5 @@
 use bytes::{BufMut, BytesMut};
-use tcp_accul::*;
+use net_accul::*;
 
 use log::*;
 use simple_logger::SimpleLogger;
@@ -81,7 +81,6 @@ fn main() {
             .iter()
             .for_each(|num| buffer.put_slice(&num.to_le_bytes()));
         // send number
-
         match stream.write_all(&buffer[..]) {
             Ok(_) => {
                 // flush stream
